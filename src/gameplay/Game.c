@@ -105,6 +105,10 @@ void Game_Init(LevelMgr *levelMgr, Engine *engine, Game* game, int lvlID, int di
     //////////////////////////////////////////////////////////////////////////
 
     game->lightTrailPitch = 0;
+    game->chainWarned = false;
+    game->chainSlowed = false;
+    game->musicNearHole = false;
+    game->musicNearHoleTimer = 0;
 
 
     SDL_Rect animFinishRect = {629, 132, 132, 132};
@@ -430,9 +434,42 @@ void Game_Update(LevelMgr *levelMgr, Engine *engine, Game* game, int* inMenu, in
             game->chain.speed = ROLLING_TO_PIT_SPEED;
         else
             game->chain.speed = game->settings->ballSpd / game->settings->slowFactor;
+
+        if (!game->chainSlowed && !game->chain.isEndReached) {
+            Engine_PlaySound(engine, SND_SLOWDOWN1);
+            game->chainSlowed = true;
+        }
+        if (!game->chainWarned && !game->chain.isEndReached) {
+            Engine_PlaySound(engine, SND_WARNING1);
+            game->chainWarned = true;
+        }
     }
     else
         game->chain.speed = game->settings->ballSpd;
+
+    // The original swaps to its suspense cue when the chain nears the hole and
+    // returns to the level theme once it is pushed back. The cue is held while
+    // balls roll into the pit, and a margin plus a short confirm delay keep a
+    // chain hovering on the threshold from flapping between the two.
+    {
+        float threshold = game->lvl->spiralLen * SLOWFACTOR_POS;
+        int lastPos = game->chain.balls[BallChain_GetLastMovingBall(&game->chain)].pos;
+        bool alive = !(game->isLosed || game->isWon);
+        bool nearHole;
+
+        if (game->musicNearHole) threshold -= game->lvl->spiralLen * 0.05f;
+        nearHole = alive && (game->chain.isEndReached || lastPos > threshold);
+
+        if (nearHole != game->musicNearHole) {
+            if (++game->musicNearHoleTimer > 30) {
+                game->musicNearHole = nearHole;
+                game->musicNearHoleTimer = 0;
+                Engine_PlayMusic(engine, nearHole ? MUS_NEAR_HOLE : MUS_GAME);
+            }
+        } else {
+            game->musicNearHoleTimer = 0;
+        }
+    }
     
     BulletsArr_CollideWithChainUpdate(engine, &game->bullets, &game->chain, game->lvl->spiral);
     Messages_Update(&game->msgs);

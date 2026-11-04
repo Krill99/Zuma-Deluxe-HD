@@ -694,8 +694,7 @@ void DialogueBox_UpdateOptions(Engine *engine, DialogueBox* db) {
     }
 
     if (Slider_IsDragging(&db->sliders[0])) {
-        BASS_ChannelSetAttribute(engine->music, 
-            BASS_ATTRIB_VOL, engine->volMus);
+        Engine_UpdateAudio(engine);
     }
 }
 

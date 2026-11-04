@@ -4,3 +4,7 @@
 [submodule "thirdparty/sdl2"]
 	path = thirdparty/sdl2
 	url = https://github.com/libsdl-org/SDL.git
+[submodule "thirdparty/openmpt"]
+	path = thirdparty/openmpt
+	url = https://github.com/OpenMPT/openmpt.git
+	shallow = true

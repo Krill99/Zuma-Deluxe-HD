@@ -4,9 +4,10 @@
 #define SDL_MAIN_HANDLED
 
 #include <SDL.h>
-#include <bass.h>
 #include <stdio.h>
 #include <stdbool.h>
+
+#include "Audio.h"
 
 #define STR_ERR_BUFFER_SIZE 128
 #define STR_PATH_BUFFER_SIZE 48
@@ -56,11 +57,11 @@ typedef struct {
 	float 			volMus;
 	float 			volSnd;
 
-    HMUSIC 			music;
+	AudioContext* 	audio;
 	unsigned int 	soundsLen;
-	HSAMPLE* 		sounds;
+	AudioSound**	sounds;
 	unsigned int 	soundsSfxLen;
-	HSTREAM*		soundsSfx;
+	AudioSound**	soundsSfx;
 } Engine;
 
 void Engine_PushError(const char*, const char*);
@@ -100,11 +101,11 @@ void Engine_DrawTextExtScale(Engine*, const char* str, int fontID,
 /* === Sound and Music === */
 int Engine_MusicLoad(Engine*, const char*);
 
-HSAMPLE Engine_SoundLoad(Engine*, const char*);
-HSTREAM Engine_SoundSfxLoad(Engine*, const char*);
+AudioSound* Engine_SoundLoad(Engine*, const char*);
+AudioSound* Engine_SoundSfxLoad(Engine*, const char*);
 int Engine_SoundsLoad(Engine*, const char**, int);
 int Engine_SoundsSfxLoad(Engine*, const char**, int);
-HSAMPLE Engine_GetSoundSample(Engine*, int);
+AudioSound* Engine_GetSoundSample(Engine*, int);
 
 void Engine_PlayMusic(Engine *engine, int);
 void Engine_StopMusic();
@@ -112,6 +113,9 @@ void Engine_PlaySound(Engine*, int);
 void Engine_StopSound(Engine *engine, int);
 void Engine_PlaySoundSfxPitch(int, float);
 void Engine_StopSoundSfx(int);
+
+/* Push live volume/slider changes to every playing voice. */
+void Engine_UpdateAudio(Engine *engine);
 
 
 void Engine_GetMousePos(Engine *engine, int* mx, int* my);

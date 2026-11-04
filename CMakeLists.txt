@@ -19,9 +19,14 @@ add_subdirectory(thirdparty/sdl2)
 # project conf
 FILE(GLOB_RECURSE SOURCES RELATIVE ${PROJECT_SOURCE_DIR} "src/*.c")
 
+# Audio decodes the pre-rendered music and effects with the vendored,
+# public-domain stb_vorbis, so no module player, codec DLL or submodule is needed.
+set(STB_VORBIS ${PROJECT_SOURCE_DIR}/thirdparty/stb/stb_vorbis.c)
+
 add_executable(
     ZumaHD
     ${SOURCES}
+    ${STB_VORBIS}
 )
 
 target_include_directories(
@@ -40,6 +45,19 @@ target_link_libraries(
     SDL2::SDL2
     expat
 )
+
+# Developer-only asset regeneration. The game itself stays C-only and needs no
+# module player; this optional target decodes content/music/zuma.mo3 again.
+option(ZUMA_BUILD_AUDIO_RENDERER "Build the offline MO3-to-PCM renderer" OFF)
+if(ZUMA_BUILD_AUDIO_RENDERER)
+    enable_language(CXX)
+    include(cmake/libopenmpt.cmake)
+    if(NOT TARGET openmpt_small)
+        message(FATAL_ERROR "Audio renderer requires thirdparty/openmpt")
+    endif()
+    add_executable(zuma_render_track tools/render_track.c)
+    target_link_libraries(zuma_render_track PRIVATE openmpt_small)
+endif()
 
 # copy assets
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD

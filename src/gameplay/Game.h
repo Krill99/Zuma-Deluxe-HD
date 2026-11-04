@@ -52,6 +52,10 @@ typedef struct _Game {
 	int time;
 	float lightTrailTime;
 	float lightTrailPitch;
+	bool chainWarned;
+	bool chainSlowed;
+	bool musicNearHole;
+	int musicNearHoleTimer;
 	Level* lvl;
 	LevelSettings* settings;
 	LevelGraphics* graphics;

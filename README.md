@@ -14,10 +14,16 @@ A remake of the legendary 2003 PopCap game with improved textures and support fo
 >
 > Thanks for testing on Linux: [@Adolf-Eleador-II](https://github.com/Adolf-Eleador-II), [@ilanufriev](https://github.com/ilanufriev), [@Tarat0r](https://github.com/Tarat0r)
 
-> [!WARNING]
-> **Audio is temporarily unavailable :(**
+> [!NOTE]
+> **Audio**
 >
-> Sound is currently not implemented because I prioritized porting the game to other platforms. Choosing an open-source audio library is discussed in [#18](https://github.com/GalaxyShad/Zuma-Deluxe-HD/issues/18) - ideas are welcome!
+> Sound and music are implemented with one public-domain source file,
+> `thirdparty/stb/stb_vorbis.c`, which decodes the pre-rendered Ogg music cues
+> and the effect clips into SDL2's audio output. No module player, codec DLL or
+> BASS library is involved at build or run time. Music follows game state
+> (level theme, near-hole suspense, win and game-over cues). See
+> [docs/AUDIO.md](docs/AUDIO.md) for how the assets were produced and how to
+> regenerate them.
 
 ## Gameplay video on YouTube
 [![Gameplay video](https://img.youtube.com/vi/VZYsNUUAozM/0.jpg)](https://www.youtube.com/watch?v=VZYsNUUAozM)
@@ -39,7 +45,7 @@ A remake of the legendary 2003 PopCap game with improved textures and support fo
 * [CMake](https://cmake.org/download/) 4.0 or newer
 * Git
 
-Deps: [SDL2](https://github.com/libsdl-org/SDL/tree/SDL2) and [Expat](https://github.com/libexpat/libexpat) are git submodules and are built together with the game, [stb_image](https://github.com/nothings/stb) is in `thirdparty/stb`. You don't need to install them.
+Deps: [SDL2](https://github.com/libsdl-org/SDL/tree/SDL2) and [Expat](https://github.com/libexpat/libexpat) are git submodules and are built together with the game, [stb_image](https://github.com/nothings/stb) and [stb_vorbis](https://github.com/nothings/stb) are in `thirdparty/stb`. You don't need to install them.
 
 ### Get the code
 ```
@@ -63,14 +69,14 @@ The game and the `content` folder are placed in `build/bin`. Run the game from t
 cd build/bin
 ./ZumaHD
 ```
-On Windows run `ZumaHD.exe`.
+On Windows run `ZumaHD.exe`. Sound works out of the box.
 
 ## Contributing
 This is a hobby project, and any help is very welcome! I'm always happy to see pull requests - big or small.
 
 Some ways to help:
 * Fix a bug or improve the code
-* Help bring the audio back - see [#18](https://github.com/GalaxyShad/Zuma-Deluxe-HD/issues/18)
+* Improve the audio - module-player parity is discussed in [#18](https://github.com/GalaxyShad/Zuma-Deluxe-HD/issues/18)
 * Test the game on your OS and tell how it went
 * Report bugs or share ideas in [issues](https://github.com/GalaxyShad/Zuma-Deluxe-HD/issues)
 
