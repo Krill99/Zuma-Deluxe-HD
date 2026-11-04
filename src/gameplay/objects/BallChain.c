@@ -16,6 +16,7 @@ void Ball_Init(Ball* ball, float pos, float x, float y, char isPusher,
 	ball->goBack = false;
 	ball->isSingle = 0;
 	ball->ang = 0;
+	ball->dx = ball->dy = 0;
 	ball->startAnim = false;
 	
 	Ball_InitAnim(ball);
@@ -65,6 +66,9 @@ void Ball_Copy(Ball* src, Ball* dst) {
 	dst->inTunnel = src->inTunnel;
 	dst->drawPrority = src->drawPrority;
 	dst->startAnim = src->startAnim;
+	dst->isSingle = src->isSingle;
+	dst->dx = src->dx;
+	dst->dy = src->dy;
 }
 
 //////////////////////////////////////////////////////////////
@@ -134,19 +138,27 @@ char BallChain_CollidesFront(BallChain* ballChain, int idx, int collideDist) {
 }
 
 void BallChain_Append(BallChain* ballChain, Level* lvl, LevelSettings* settings) {
+	if (ballChain->len >= BALLCHAIN_MAX_LEN || ballChain->ballColors < 1) return;
+	if (ballChain->len == 0) {
+		Ball_Init(&ballChain->balls[0], 0, lvl->spiralStart.x, lvl->spiralStart.y,
+			0, randInt(0, ballChain->ballColors - 1), 0);
+		ballChain->len = 1;
+		BallChain_UpdateColorInChain(ballChain);
+		return;
+	}
 	bool isSingle = 0;
-	char color;
+	char color = ballChain->balls[ballChain->len - 1].color;
 	if (ballChain->balls[ballChain->len-1].isSingle) {
 		color = ballChain->balls[ballChain->len-1].color;
-		while (color == ballChain->balls[ballChain->len-1].color)
+		while (ballChain->ballColors > 1 && color == ballChain->balls[ballChain->len-1].color)
 			color = randInt(0, ballChain->ballColors - 1);
 
 	} else if (randInt(1, 100) < settings->singleChance) {
 		color = ballChain->balls[ballChain->len - 1].color;
-		while (color == ballChain->balls[ballChain->len - 1].color)
+		while (ballChain->ballColors > 1 && color == ballChain->balls[ballChain->len - 1].color)
 			color = randInt(0, ballChain->ballColors - 1);
 
-		ballChain->balls[ballChain->len].isSingle = 1;
+		isSingle = (ballChain->ballColors > 1);
 
 	}  else if (randInt(1, 100) < settings->repeatChance) {
 		int start, end;
@@ -154,7 +166,7 @@ void BallChain_Append(BallChain* ballChain, Level* lvl, LevelSettings* settings)
 		if (end - start + 1 < 4)
 			color = ballChain->balls[ballChain->len - 1].color;
 		else {
-			while (color == ballChain->balls[ballChain->len - 1].color)
+			while (ballChain->ballColors > 1 && color == ballChain->balls[ballChain->len - 1].color)
 					color = randInt(0, ballChain->ballColors - 1);
 		}
 
@@ -173,6 +185,7 @@ void BallChain_Append(BallChain* ballChain, Level* lvl, LevelSettings* settings)
 		color,
 		0
 	);
+	ballChain->balls[ballChain->len].isSingle = isSingle;
 	ballChain->len++;
 }
 
@@ -265,14 +278,17 @@ void BallChain_Update(Engine *engine, BallChain* ballChain, SpiralDot* spiral, i
 		if (ball->pos < 0) {
 			if (ballChain->len == 1)
 				ball->pos = 0;
-			else
+			else {
 				BallChain_Destroy(ballChain, i, i);
+				continue;
+			}
 		}
 
-		if ((int)ball->pos >= spiralLen) {
+		if (ball->pos >= spiralLen) {
 			BallChain_Destroy(ballChain, i, i);
 			ballChain->isGenerating = 0;
 			ballChain->isEndReached = 1;
+			continue;
 		}
 
 		float xx, yy;
@@ -360,8 +376,21 @@ void BallChain_Update(Engine *engine, BallChain* ballChain, SpiralDot* spiral, i
 		}
 
 
+		// Movement and insertion can cross either path boundary this tick.
+		// Remove before sampling, and never reuse a slot shifted by Destroy.
+		if (ball->pos < 0) {
+			if (ballChain->len == 1) ball->pos = 0;
+			else { BallChain_Destroy(ballChain, i, i); continue; }
+		}
+		if (ball->pos >= spiralLen) {
+			BallChain_Destroy(ballChain, i, i);
+			ballChain->isGenerating = false;
+			ballChain->isEndReached = true;
+			continue;
+		}
+
 		int j;
-		for (j = 0; j < (int)ball->pos; j++) {
+		for (j = 0; j < (int)ball->pos && j < spiralLen; j++) {
 			xx += spiral[j].dx * engine->scale_x;
 			yy += spiral[j].dy * engine->scale_y;
 
@@ -369,6 +398,7 @@ void BallChain_Update(Engine *engine, BallChain* ballChain, SpiralDot* spiral, i
 			ball->inTunnel = spiral[j].t1;
 			ball->drawPrority = spiral[j].t2;
 		}
+		if (j >= spiralLen) j = spiralLen - 1;
 
 		float _;
 
@@ -511,34 +541,32 @@ void BallChain_Destroy(BallChain* ballChain, int start, int end) {
 }
 
 void BallChain_Insert(Engine *engine, BallChain* ballChain, int idx, char color, bool isInsertBack) {
-	Ball curr;
-	Ball prev;
+	if (ballChain->len <= 0 || ballChain->len >= BALLCHAIN_MAX_LEN ||
+		idx < 0 || idx > ballChain->len || (isInsertBack && idx == 0) ||
+		(!isInsertBack && idx == ballChain->len)) return;
 
-	Ball_Copy(&ballChain->balls[idx], &prev);
-	for (int i = idx + 1; i < ballChain->len + 1; i++) {
-		Ball_Copy(&ballChain->balls[i], &curr);
-		Ball_Copy(&prev, &ballChain->balls[i]);
-		Ball_Copy(&curr, &prev);
-	}
+	// Copy only live balls, including the tail-insertion case idx == len.
+	Ball inserted = ballChain->balls[isInsertBack ? idx - 1 : idx];
+	if (isInsertBack && (idx == ballChain->len ||
+		inserted.pos - ballChain->balls[idx].pos >= BALLS_CHAIN_PAD))
+		inserted.pos -= BALLS_CHAIN_PAD;
+	for (int i = ballChain->len; i > idx; --i)
+		ballChain->balls[i] = ballChain->balls[i - 1];
 
-	if (isInsertBack) {
-		if (!BallChain_CollidesBack(ballChain, idx, BALLS_CHAIN_PAD)) {
-			ballChain->balls[idx].pos = ballChain->balls[idx-1].pos - BALLS_CHAIN_PAD;
-		} else {
-			ballChain->balls[idx].pos = ballChain->balls[idx-1].pos;
-			ballChain->balls[idx].x = ballChain->balls[idx-1].x;
-			ballChain->balls[idx].y = ballChain->balls[idx-1].y;
-		}
-	}
-
-
-	ballChain->balls[idx].color = color;
-	ballChain->balls[idx].isExploding = 0;
-	ballChain->balls[idx].isInserted = 1;
-
-	Engine_PlaySound(engine, SND_BALLCLICK2);
+	// A fired ball must not inherit the struck ball's power-up or combo state.
+	inserted.color = color;
+	inserted.bonus = 0;
+	inserted.combo = 0;
+	inserted.isSingle = false;
+	inserted.goBack = false;
+	inserted.isExploding = false;
+	inserted.startAnim = false;
+	inserted.isInserted = true;
+	ballChain->balls[idx] = inserted;
 	Ball_InitAnim(&ballChain->balls[idx]);
 	ballChain->len++;
+	BallChain_UpdateColorInChain(ballChain);
+	Engine_PlaySound(engine, SND_BALLCLICK2);
 }
 
 void BallChain_Draw(Engine *engine, BallChain* ballChain, bool priorBallsOnly) {

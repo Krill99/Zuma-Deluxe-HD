@@ -1,7 +1,7 @@
 #include "Bullet.h"
 
 void Bullet_Init(Bullet* bullet, float x, float y, float motionVecX, 
-	float motionVecY, char color) {
+	float motionVecY, char color, float speed) {
 
 	bullet->x = x;
 	bullet->y = y;
@@ -9,6 +9,9 @@ void Bullet_Init(Bullet* bullet, float x, float y, float motionVecX,
 	bullet->motionVecY = motionVecY;
 	bullet->color = color;
 	bullet->onScreen = 1;
+	// The level's firespeed is authored in the original 640-wide space; HD
+	// path coordinates are scaled by 1.5.
+	bullet->speed = speed * 1.5f;
 
 	SDL_Rect animBallRect = {48 * bullet->color, 0, 48, 48};
 	Animation_Init(&bullet->anim, TEX_GAME_OBJECTS, animBallRect);
@@ -16,8 +19,8 @@ void Bullet_Init(Bullet* bullet, float x, float y, float motionVecX,
 }
 
 void Bullet_Update(Bullet* bullet) {
-	bullet->x += bullet->motionVecX * BULLET_SPEED;
-	bullet->y += bullet->motionVecY * BULLET_SPEED;
+	bullet->x += bullet->motionVecX * bullet->speed;
+	bullet->y += bullet->motionVecY * bullet->speed;
 }
 
 void Bullet_Draw(Engine *engine, Bullet* bullet) {
@@ -25,10 +28,11 @@ void Bullet_Draw(Engine *engine, Bullet* bullet) {
 }
 
 void BulletsArr_UpdateOnScreenStatus(Engine *engine, BulletsArr* bulletsArr, int* chainBonus) {
-	int w, h;
-	SDL_GetWindowSize(engine->win, &w, &h);
+	// Bullet positions are logical coordinates, independent of window size.
+	const int w = (int)WINDOW_WIDTH, h = (int)WINDOW_HEIGHT;
 
-	for (int i = 0; i < bulletsArr->len; i++)
+	for (int i = 0; i < bulletsArr->len; i++) {
+		if (!bulletsArr->bullets[i].onScreen) continue;
 		if (bulletsArr->bullets[i].x > w + 50 || 
 		    bulletsArr->bullets[i].x < -50
 		) {
@@ -42,9 +46,10 @@ void BulletsArr_UpdateOnScreenStatus(Engine *engine, BulletsArr* bulletsArr, int
 			bulletsArr->bullets[i].onScreen = 0;
 			*chainBonus = 0;
 		}
+	}
 }
 
-void BulletsArr_AddBullet(BulletsArr* bulletsArr, Frog* frog) {
+void BulletsArr_AddBullet(BulletsArr* bulletsArr, Frog* frog, float speed) {
 	for (int i = 0; i < bulletsArr->len; i++) {
 		if (!bulletsArr->bullets[i].onScreen) {
 			Bullet_Init(
@@ -53,7 +58,8 @@ void BulletsArr_AddBullet(BulletsArr* bulletsArr, Frog* frog) {
 				frog->y + frog->forwardY*FROG_CUR_BALL_PAD,
 				frog->forwardX,
 				frog->forwardY,
-				frog->color
+				frog->color,
+				speed
 			);
 			Animation_SetAngle(&bulletsArr->bullets[i].anim, frog->rotation);
 			
@@ -61,19 +67,22 @@ void BulletsArr_AddBullet(BulletsArr* bulletsArr, Frog* frog) {
 		}
 	}
 
+	if (bulletsArr->len >= BULLETS_ARR_MAX_LEN) return;
+
 	Bullet_Init(
 		&bulletsArr->bullets[bulletsArr->len], 
 		frog->x + frog->forwardX*FROG_CUR_BALL_PAD, 
 		frog->y + frog->forwardY*FROG_CUR_BALL_PAD,
 		frog->forwardX,
 		frog->forwardY,
-		frog->color
+		frog->color,
+		speed
 	);
 	Animation_SetAngle(&bulletsArr->bullets[bulletsArr->len].anim, frog->rotation);
 	bulletsArr->len++;
 }
 
-char Bullet_isInsertInBack(Engine *engine, Bullet* bullet, Ball* ball, SpiralDot* spiral) {
+char Bullet_isInsertInBack(Engine *engine, Bullet* bullet, Ball* ball, SpiralDot* spiral, int spiralLen) {
 	float x1 = ball->x;
 	float y1 = ball->y;
 	float pos1 = ball->pos;
@@ -82,7 +91,9 @@ char Bullet_isInsertInBack(Engine *engine, Bullet* bullet, Ball* ball, SpiralDot
 	float y2 = ball->y;
 	float pos2 = ball->pos;
 
-	while (pos1 - ball->pos < BALLS_CHAIN_PAD) {
+	if (spiralLen <= 0) return 0;
+
+	while (pos1 - ball->pos < BALLS_CHAIN_PAD && (int)pos1 < spiralLen) {
 		x1 += spiral[(int)pos1].dx * engine->scale_x * 0.5;
 		y1 += spiral[(int)pos1].dy * engine->scale_y * 0.5;
 
@@ -123,7 +134,7 @@ int Bullet_IsCollidingWithChain(Bullet* bullet, BallChain* ballChain) {
 	return -1;
 }
 
-void BulletsArr_CollideWithChainUpdate(Engine *engine, BulletsArr* bulletsArr, BallChain* ballChain, SpiralDot* spiral) {
+void BulletsArr_CollideWithChainUpdate(Engine *engine, BulletsArr* bulletsArr, BallChain* ballChain, SpiralDot* spiral, int spiralLen) {
 	for (int i = 0; i < bulletsArr->len; i++) {
 		if (!bulletsArr->bullets[i].onScreen) continue;
 
@@ -135,7 +146,7 @@ void BulletsArr_CollideWithChainUpdate(Engine *engine, BulletsArr* bulletsArr, B
 			char isInsertBack = Bullet_isInsertInBack(
 				engine,
 				&bulletsArr->bullets[i], 
-				&ballChain->balls[collBall], spiral);
+				&ballChain->balls[collBall], spiral, spiralLen);
 
 			collBall = collBall + isInsertBack;
 

@@ -32,28 +32,60 @@ void Game_Init(LevelMgr *levelMgr, Engine *engine, Game* game, int lvlID, int di
     Level_Load(levelMgr, engine, game->lvl);
 
     game->graphics = LevelMgr_GetLevelGraphics(levelMgr, game->lvl);
+
+    // Resolve this level's tuned settings. A level without its own entry falls
+    // back to the difficulty profile; the copy keeps global data immutable.
+    {
+        int profile = 4;
+        LevelSettings* source = NULL;
+        LevelSettings* own = LevelMgr_GetLevelSettings(levelMgr, game->lvl, 0);
+        if (own) source = own;
+        if (!source) {
+            switch (difficulty) {
+                case 0: profile = 4; break;
+                case 1: profile = 8; break;
+                case 2: profile = 13; break;
+                case 3: profile = 24; break;
+            }
+            if (profile < levelMgr->settingsLen)
+                source = &levelMgr->settings[profile];
+        }
+        if (source)
+            game->settingsStorage = *source;
+        else {
+            memset(&game->settingsStorage, 0, sizeof(game->settingsStorage));
+            strcpy(game->settingsStorage.id, "none");
+            game->settingsStorage.ballSpd = 0.5f;
+            game->settingsStorage.ballStartCount = 35;
+            game->settingsStorage.gaugeScore = 1000;
+            game->settingsStorage.repeatChance = 40;
+            game->settingsStorage.singleChance = 6;
+            game->settingsStorage.ballColors = 4;
+            game->settingsStorage.partTime = 30;
+            game->settingsStorage.slowFactor = 4;
+            game->settingsStorage.fireSpeed = 6;
+        }
+        game->settings = &game->settingsStorage;
+    }
+
     switch(difficulty) {
         case 0:
-            game->settings = &levelMgr->settings[4];
             game->settings->ballColors = 4;
             game->settings->partTime = 70;
             game->settings->ballStartCount = 40;
             break;
         case 1:
-            game->settings = &levelMgr->settings[8];
             game->settings->ballColors = 5;
             game->settings->partTime = 100;
             game->settings->ballStartCount = 50;
             break;
         case 2:
-            game->settings = &levelMgr->settings[13];
             game->settings->ballColors = 6;
             game->settings->repeatChance = 25;
             game->settings->partTime = 120;
             game->settings->ballStartCount = 60;
             break;
         case 3:
-            game->settings = &levelMgr->settings[24];
             game->settings->ballColors = 6;
             game->settings->partTime = 150;
             game->settings->ballStartCount = 60;
@@ -105,6 +137,11 @@ void Game_Init(LevelMgr *levelMgr, Engine *engine, Game* game, int lvlID, int di
     //////////////////////////////////////////////////////////////////////////
 
     game->lightTrailPitch = 0;
+    game->shootCooldown = 0;
+    game->chainWarned = false;
+    game->chainSlowed = false;
+    game->musicNearHole = false;
+    game->musicNearHoleTimer = 0;
 
 
     SDL_Rect animFinishRect = {629, 132, 132, 132};
@@ -145,9 +182,14 @@ void Game_Init(LevelMgr *levelMgr, Engine *engine, Game* game, int lvlID, int di
 static bool _Game_FrogControl(Engine *engine, Game* game, int mouseClicked) {
     bool isShooted = 0;
 
+    if (game->shootCooldown > 0) game->shootCooldown -= 1.0f;
+
     switch (mouseClicked) {
         case 1:
-            if (!isShooted && !game->chain.isEndReached && !game->isFirstTime)
+            // reloaddelay is authored in 1/60 s; a shot must also wait for the
+            // recoil animation to finish so the frog is back in place.
+            if (!isShooted && !game->chain.isEndReached && !game->isFirstTime &&
+                game->shootCooldown <= 0 && !(int)game->frog.shift)
                 isShooted = true;
             break;
         case 2: {
@@ -168,7 +210,7 @@ static bool _Game_isEnd(LevelMgr *levelMgr, Engine *engine, Game* game, int* inM
 
     if (game->isWon && !game->isOutroEnded) {
         Game_UpdateOutro(engine, game);
-        return false;
+        return true;
     }
 
     if (game->dbStats) {
@@ -373,10 +415,10 @@ void Game_Update(LevelMgr *levelMgr, Engine *engine, Game* game, int* inMenu, in
         return;
     }
 
-    bool isShooted = _Game_FrogControl(engine, game, mouseClicked);
-
     if (_Game_isEnd(levelMgr, engine, game, inMenu)) return;
     if (_Game_HandleMenu(engine, game, inMenu)) return;
+
+    bool isShooted = _Game_FrogControl(engine, game, mouseClicked);
 
     BallChain_Update(engine, &game->chain, game->lvl->spiral, 
         game->lvl->spiralLen, &game->score, &game->msgs);
@@ -397,30 +439,37 @@ void Game_Update(LevelMgr *levelMgr, Engine *engine, Game* game, int* inMenu, in
     _Game_HandleGameWon(engine, game);
     if (_Game_IsGameLose(levelMgr, engine, game)) return;
 
+    // The last ball may have disappeared during this update.
+    // Do not shoot or select colours from an empty chain.
+    if (game->isWon || game->isLosed || game->chain.len == 0) return;
+
     // UI Update
     Button_Update(engine, &game->btnMenu);
     if (Button_IsClicked(&game->btnMenu)) {
         game->dbMenu = DialogueBox_CreateMenu(engine);
     }
 
-    if (isShooted && !(int)game->frog.shift && game->btnMenu.state != BTN_CLICKED) {
-        BulletsArr_AddBullet(&game->bullets, &game->frog);
+    if (isShooted && game->btnMenu.state != BTN_CLICKED) {
+        BulletsArr_AddBullet(&game->bullets, &game->frog, game->settings->fireSpeed);
         Engine_PlaySound(engine, SND_FIREBALL1);
+
+        if (game->settings->reloadDelay > 0)
+            game->shootCooldown = (float)game->settings->reloadDelay;
 
         game->frog.isShooted = 1;
         game->frog.color = game->frog.nextColor;
         game->frog.nextColor = randInt(0, game->chain.ballColors-1);
-        while(!game->chain.colorInChain[game->frog.nextColor])
+        for (int guard = 0; guard < 64 && !game->chain.colorInChain[game->frog.nextColor]; guard++)
             game->frog.nextColor = randInt(0, game->chain.ballColors-1);
     }
 
     // Changing frog color if color not in chain
     if (!(game->isLosed || game->isWon || game->chain.isEndReached) 
         && (!game->chain.colorInChain[game->frog.nextColor] || !game->chain.colorInChain[game->frog.color])) {
-        while(!game->chain.colorInChain[game->frog.nextColor])
+        for (int guard = 0; guard < 64 && !game->chain.colorInChain[game->frog.nextColor]; guard++)
             game->frog.nextColor = randInt(0, game->chain.ballColors-1);
 
-        while(!game->chain.colorInChain[game->frog.color])
+        for (int guard = 0; guard < 64 && !game->chain.colorInChain[game->frog.color]; guard++)
             game->frog.color = randInt(0, game->chain.ballColors-1);
     }
 
@@ -430,11 +479,47 @@ void Game_Update(LevelMgr *levelMgr, Engine *engine, Game* game, int* inMenu, in
             game->chain.speed = ROLLING_TO_PIT_SPEED;
         else
             game->chain.speed = game->settings->ballSpd / game->settings->slowFactor;
+
+        if (!game->chainSlowed && !game->chain.isEndReached) {
+            Engine_PlaySound(engine, SND_SLOWDOWN1);
+            game->chainSlowed = true;
+        }
+        if (!game->chainWarned && !game->chain.isEndReached) {
+            Engine_PlaySound(engine, SND_WARNING1);
+            game->chainWarned = true;
+        }
     }
     else
         game->chain.speed = game->settings->ballSpd;
+
+    // The original switches to its suspense cue when the chain nears the hole
+    // and returns to the level theme once it is pushed back. Hysteresis and a
+    // short confirm delay stop a chain hovering on the threshold from flapping.
+    {
+        float threshold = game->lvl->spiralLen * SLOWFACTOR_POS;
+        int lastPos = game->chain.balls[BallChain_GetLastMovingBall(&game->chain)].pos;
+        bool alive = !(game->isLosed || game->isWon);
+        bool nearHole;
+
+        if (game->musicNearHole) threshold -= game->lvl->spiralLen * 0.05f;
+        /* Keep suspense running once balls roll into the pit; it resolves only
+         * with the win or loss cue. */
+        nearHole = alive && (game->chain.isEndReached || lastPos > threshold);
+
+        if (nearHole != game->musicNearHole) {
+            if (++game->musicNearHoleTimer > 30) {
+                game->musicNearHole = nearHole;
+                game->musicNearHoleTimer = 0;
+                SDL_Log("Music: %s", nearHole ? "near hole suspense" : "back to level theme");
+                Engine_PlayMusic(engine, nearHole ? MUS_NEAR_HOLE : MUS_GAME);
+            }
+        } else {
+            game->musicNearHoleTimer = 0;
+        }
+    }
     
-    BulletsArr_CollideWithChainUpdate(engine, &game->bullets, &game->chain, game->lvl->spiral);
+    BulletsArr_CollideWithChainUpdate(engine, &game->bullets, &game->chain,
+        game->lvl->spiral, game->lvl->spiralLen);
     Messages_Update(&game->msgs);
     Game_UpdateTreasure(engine, game);
 }
@@ -684,7 +769,7 @@ void Game_UpdateOutro(Engine *engine, Game* game) {
     Messages_Update(&game->msgs);
     Particles_Update(&game->particles, EXPLOSION_LAST_FRAME, EXPLOSION_ANIM_SPEED);
 
-    if (game->particles.pos > game->lvl->spiralLen) {
+    if (game->particles.pos >= game->lvl->spiralLen) {
         for (int i = 0; i < game->particles.len; i++) {
             if (game->particles.prtcls[i].onScreen) return;
         }
@@ -751,7 +836,7 @@ void Game_UpdateIntro(Engine *engine, Game* game) {
     } else if (distToEnd > 0.15 &&  game->subHeaderFontScale < 1.0)
         game->subHeaderFontScale += 0.1;
 
-    if (game->particles.pos > game->lvl->spiralLen) {
+    if (game->particles.pos >= game->lvl->spiralLen) {
         for (int i = 0; i < game->particles.len; i++) {
             if (game->particles.prtcls[i].onScreen) return;
         }

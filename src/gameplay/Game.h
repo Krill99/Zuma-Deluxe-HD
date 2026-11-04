@@ -52,8 +52,15 @@ typedef struct _Game {
 	int time;
 	float lightTrailTime;
 	float lightTrailPitch;
+	float shootCooldown;
+	bool chainWarned;
+	bool chainSlowed;
+	bool musicNearHole;
+	int musicNearHoleTimer;
 	Level* lvl;
 	LevelSettings* settings;
+	/* Resolved copy so difficulty/level tuning never mutates the level table. */
+	LevelSettings settingsStorage;
 	LevelGraphics* graphics;
 
 	int totalCoins;

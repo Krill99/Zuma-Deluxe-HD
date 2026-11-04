@@ -21,7 +21,7 @@
 
 typedef struct _Bullet {
 	char color, onScreen;
-	float x, y, motionVecX, motionVecY;
+	float x, y, motionVecX, motionVecY, speed;
 	Animation anim;
 } Bullet;
 
@@ -30,13 +30,13 @@ typedef struct _BulletsArr {
 	int len;
 } BulletsArr;
 
-void Bullet_Init(Bullet*, float, float, float, float, char);
+void Bullet_Init(Bullet*, float, float, float, float, char, float);
 void Bullet_Update(Bullet*);
 void Bullet_Draw(Engine *engine, Bullet*);
 
-void BulletsArr_CollideWithChainUpdate(Engine *engine, BulletsArr*, BallChain*, SpiralDot*);
+void BulletsArr_CollideWithChainUpdate(Engine *engine, BulletsArr*, BallChain*, SpiralDot*, int spiralLen);
 void BulletsArr_UpdateOnScreenStatus(Engine *engine, BulletsArr*, int*);
-void BulletsArr_AddBullet(BulletsArr*, Frog*);
+void BulletsArr_AddBullet(BulletsArr*, Frog*, float speed);
 void BulletsArr_Update(BulletsArr*);
 void BulletsArr_Draw(Engine *engine, BulletsArr*);
 

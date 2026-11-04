@@ -48,6 +48,8 @@ static int ApplicationZuma_LoadResources(LevelMgr *levelMgr, Engine *engine) {
 
   if (!LevelMgr_LoadLevels(levelMgr, "levels.xml"))
     return 8;
+
+  return 0;
 }
 
 static int ApplicationZuma_ShowStartupImage(Engine *engine) {
@@ -65,6 +67,8 @@ static int ApplicationZuma_ShowStartupImage(Engine *engine) {
   SDL_RenderCopy(engine->render, texDisc, NULL, NULL);
   SDL_RenderPresent(engine->render);
   SDL_Delay(2000);
+  SDL_DestroyTexture(texDisc);
+  return 0;
 }
 
 static void ApplicationZuma_HandleEvents(App *app) {
@@ -125,8 +129,15 @@ int ApplicationZuma_Start(void) {
   if (!Engine_CreateWindow(&engine, "Zuma HD. By GalaxyShad and s4lat", WINDOW_WIDTH, WINDOW_HEIGHT))
     return 2;
 
-  ApplicationZuma_ShowStartupImage(&engine);
-  ApplicationZuma_LoadResources(&levelMgr, &engine);
+  int startupResult = ApplicationZuma_ShowStartupImage(&engine);
+  if (startupResult != 0)
+    return startupResult;
+
+  int loadResult = ApplicationZuma_LoadResources(&levelMgr, &engine);
+  if (loadResult != 0) {
+    Engine_PushErrorCode("Unable to load game resources", loadResult);
+    return loadResult;
+  }
 
   srand(time(NULL));
 
