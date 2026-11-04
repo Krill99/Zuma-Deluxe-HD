@@ -1,0 +1,47 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DZUMA_BUILD_AUDIO_TESTS=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Audio decode regression
+        working-directory: build/bin/Release
+        run: |
+          $failed = 0
+          Get-ChildItem music/track*.ogg | ForEach-Object {
+            ./audio_stream_test.exe $_.FullName
+            if ($LASTEXITCODE -ne 0) { $failed = 1 }
+          }
+          if ($failed) { exit 1 }
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev libasound2-dev libpulse-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxinerama-dev libwayland-dev libxkbcommon-dev libudev-dev libgbm-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DZUMA_USE_SYSTEM_SDL2=ON -DZUMA_BUILD_AUDIO_TESTS=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Audio decode regression
+        working-directory: build/bin
+        run: |
+          for track in music/track*.ogg; do ./audio_stream_test "$track"; done

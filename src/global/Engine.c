@@ -7,6 +7,10 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+// Engine owning the process audio device. The library exposes a few legacy
+// helpers without an Engine argument; they resolve through this pointer.
+static Engine* engineAudio = NULL;
+
 // ==== Common ==== //
 void Engine_PushError(const char* header, const char* main) {
     char errMsg[STR_ERR_BUFFER_SIZE];
@@ -51,13 +55,17 @@ int Engine_Init(Engine *engine) {
     engine->render = NULL;
     engine->textures = NULL;
     engine->texturesLen = 0;
+    engine->fonts = NULL;
+    engine->fontsLen = 0;
+    engine->soundsSfx = NULL;
+    engine->soundsSfxLen = 0;
 
     engine->fullScr = false;
 
     engine->scale_x = 1.5;
     engine->scale_y = 1.5;
 
-    engine->music = 0;
+    engine->audio = NULL;
     engine->sounds = NULL;
     engine->soundsLen = 0;
 
@@ -70,12 +78,11 @@ int Engine_Init(Engine *engine) {
         return 0;
     }
 
-
-    if (!BASS_Init(-1, MUSIC_FREQUENCY, BASS_DEVICE_STEREO, 0, NULL)) {
-        Engine_PushErrorCode("Bass.dll initialization error",
-                                BASS_ErrorGetCode());
-        return 0;
-    }
+    // Audio is optional: an unavailable or incompatible decoder is a logged
+    // silent fallback, matching the previous no-op behaviour. The dedicated
+    // Zig audio backend ships with the game; the Steam BASS library also works.
+    engine->audio = Audio_Create();
+    engineAudio = engine;
 
     return 1;
 }
@@ -83,32 +90,36 @@ int Engine_Init(Engine *engine) {
 void Engine_Destroy(Engine *engine) {
 
     /* Graphics */
-    for (int i = 0; i < engine->texturesLen; i++)
+    for (unsigned int i = 0; i < engine->texturesLen; i++)
         SDL_DestroyTexture(engine->textures[i]);
     free(engine->textures);
 
-    for (int i = 0; i < engine->fontsLen; i++)
+    for (unsigned int i = 0; i < engine->fontsLen; i++)
         Engine_FontFree(engine->fonts[i]);
     free(engine->fonts);
 
-    SDL_DestroyWindow(engine->win);
-    engine->win = NULL;
-    SDL_DestroyRenderer(engine->render);
-    engine->render = NULL;
+    if (engine->render) {
+        SDL_DestroyRenderer(engine->render);
+        engine->render = NULL;
+    }
+    if (engine->win) {
+        SDL_DestroyWindow(engine->win);
+        engine->win = NULL;
+    }
 
     /* Sound and music */
-    for (int i = 0; i < engine->soundsLen; i++)
-        BASS_SampleFree(engine->sounds[i]);
+    for (unsigned int i = 0; i < engine->soundsLen; i++)
+        Audio_FreeSound(engine->audio, engine->sounds[i]);
     free(engine->sounds);
 
-    for (int i = 0; i < engine->soundsSfxLen; i++)
-        BASS_StreamFree(engine->soundsSfx[i]);
+    for (unsigned int i = 0; i < engine->soundsSfxLen; i++)
+        Audio_FreeSound(engine->audio, engine->soundsSfx[i]);
     free(engine->soundsSfx);
 
-    BASS_MusicFree(engine->music);
+    Audio_Destroy(engine->audio);
+    engine->audio = NULL;
 
     SDL_Quit();
-    BASS_Free();
 }
 
 /////////////////////////////////////////////////////////////////////////
@@ -584,28 +595,24 @@ int Engine_MusicLoad(Engine *engine, const char* fileName) {
     char* basePath = SDL_GetBasePath();
 
     char path[256];
-    sprintf(path, "%s%s/%s", basePath, MUSIC_FOLDER, fileName);
+    SDL_snprintf(path, sizeof(path), "%s%s/%s", basePath, MUSIC_FOLDER, fileName);
 
     SDL_free(basePath);
 
-    engine->music = BASS_MusicLoad(
-        FALSE, path, 0, 0, BASS_SAMPLE_LOOP, MUSIC_FREQUENCY);
-
-    if (engine->music == 0) {
-        Engine_PushErrorFileCode(fileName, BASS_ErrorGetCode());
+    if (!Audio_LoadMusic(engine->audio, path)) {
+        Engine_PushErrorFile(fileName, "Music could not be loaded.");
         return 0;
     }
 
     return 1;
 }
 
-HSAMPLE Engine_SoundLoad(Engine *engine, const char* fileName) {
-    HSAMPLE sound = BASS_SampleLoad(
-        FALSE, fileName, 0, 0, 65535, 0);
+AudioSound* Engine_SoundLoad(Engine *engine, const char* fileName) {
+    AudioSound* sound = Audio_LoadSound(engine->audio, fileName, 0);
 
     if (!sound) {
-        Engine_PushErrorFileCode(fileName, BASS_ErrorGetCode());
-        return 0;
+        Engine_PushErrorFile(fileName, "Sound could not be loaded.");
+        return NULL;
     }
 
     return sound;
@@ -615,21 +622,23 @@ int Engine_SoundsLoad(Engine *engine, const char** files, int n) {
     if (n <= 0)
         return 0;
 
-    engine->sounds = (HSAMPLE*)malloc(sizeof(HSAMPLE*) * n);
+    engine->sounds = (AudioSound**)malloc(sizeof(AudioSound*) * n);
     if (!engine->sounds) {
         Engine_PushError("Critical Error!", "Out of memory.");
         return 0;
     }
 
     char* basePath = SDL_GetBasePath();
+    char path[256];
 
     for (int i = 0; i < n; i++) {
-        char path[256];
-        sprintf(path, "%s%s/%s", basePath, SOUND_FOLDER, files[i]);
+        SDL_snprintf(path, sizeof(path), "%s%s/%s", basePath, SOUND_FOLDER, files[i]);
 
         engine->sounds[i] = Engine_SoundLoad(engine, path);
-        if (!engine->sounds[i])
+        if (!engine->sounds[i]) {
+            SDL_free(basePath);
             return 0;
+        }
     }
     engine->soundsLen = n;
 
@@ -638,15 +647,13 @@ int Engine_SoundsLoad(Engine *engine, const char** files, int n) {
     return 1;
 }
 
-HSTREAM Engine_SoundSfxLoad(Engine *engine, const char* fileName) {
-    HSTREAM sound = BASS_StreamCreateFile(
-        FALSE, fileName, 0, 0,
-        BASS_STREAM_DECODE);
-    sound = BASS_FX_TempoCreate(sound, BASS_SAMPLE_FX);
+AudioSound* Engine_SoundSfxLoad(Engine *engine, const char* fileName) {
+    // Pitch-shifted effects play as streams so the rate can change per voice.
+    AudioSound* sound = Audio_LoadSound(engine->audio, fileName, 1);
 
     if (!sound) {
-        Engine_PushErrorFileCode(fileName, BASS_ErrorGetCode());
-        return 0;
+        Engine_PushErrorFile(fileName, "Sound could not be loaded.");
+        return NULL;
     }
 
     return sound;
@@ -656,21 +663,23 @@ int Engine_SoundsSfxLoad(Engine *engine, const char** files, int n) {
     if (n <= 0)
         return 0;
 
-    engine->soundsSfx = (HSTREAM*)malloc(sizeof(HSTREAM*) * n);
+    engine->soundsSfx = (AudioSound**)malloc(sizeof(AudioSound*) * n);
     if (!engine->soundsSfx) {
         Engine_PushError("Critical Error!", "Out of memory.");
         return 0;
     }
 
     char* basePath = SDL_GetBasePath();
+    char path[256];
 
     for (int i = 0; i < n; i++) {
-        char path[256];
-        sprintf(path, "%s%s/%s", basePath, SOUND_FOLDER, files[i]);
+        SDL_snprintf(path, sizeof(path), "%s%s/%s", basePath, SOUND_FOLDER, files[i]);
 
         engine->soundsSfx[i] = Engine_SoundSfxLoad(engine, path);
-        if (!engine->soundsSfx[i])
+        if (!engine->soundsSfx[i]) {
+            SDL_free(basePath);
             return 0;
+        }
     }
     engine->soundsSfxLen = n;
 
@@ -679,58 +688,56 @@ int Engine_SoundsSfxLoad(Engine *engine, const char** files, int n) {
     return 1;
 }
 
-HSAMPLE Engine_GetSoundSample(Engine *engine, int soundID) {
-    if (soundID < 0 || soundID >= engine->soundsLen)
-        return 0;
+AudioSound* Engine_GetSoundSample(Engine *engine, int soundID) {
+    if (soundID < 0 || (unsigned int)soundID >= engine->soundsLen)
+        return NULL;
 
     return engine->sounds[soundID];
 }
 
 void Engine_PlayMusic(Engine *engine, int musicID) {
-    if (!BASS_ChannelIsActive(engine->music)) {
-        BASS_ChannelSetAttribute(engine->music,
-            BASS_ATTRIB_VOL, engine->volMus);
-        BASS_ChannelPlay(engine->music, FALSE);
-    }
-
-    BASS_ChannelSetPosition(
-        engine->music,
-        MAKELONG(musicID, 0),
-        BASS_POS_MUSIC_ORDER
-    );
+    Audio_PlayMusic(engine->audio, musicID, engine->volMus);
 }
 
 void Engine_StopMusic() {
-    BASS_ChannelStop(engine->music);
+    if (engineAudio && engineAudio->audio)
+        Audio_StopMusic(engineAudio->audio);
 }
 
 void Engine_PlaySound(Engine *engine, int soundID) {
-    if (soundID < 0 || soundID >= engine->soundsLen)
+    if (soundID < 0 || (unsigned int)soundID >= engine->soundsLen)
         return;
 
-    HCHANNEL ch = BASS_SampleGetChannel(
-        engine->sounds[soundID], FALSE);
-
-    BASS_ChannelSetAttribute(ch, BASS_ATTRIB_VOL, engine->volSnd);
-    BASS_ChannelPlay(ch, FALSE);
+    Audio_PlaySound(engine->audio, engine->sounds[soundID], engine->volSnd, 0.0f);
 }
 
 void Engine_StopSound(Engine *engine, int soundID) {
-    if (soundID < 0 || soundID >= engine->soundsLen)
+    if (soundID < 0 || (unsigned int)soundID >= engine->soundsLen)
         return;
 
-    BASS_SampleStop(engine->sounds[soundID]);
+    Audio_StopSound(engine->audio, engine->sounds[soundID]);
 }
 
 void Engine_PlaySoundSfxPitch(int soundID, float pitch) {
-    BASS_ChannelSetAttribute(engine->soundsSfx[soundID],
-        BASS_ATTRIB_TEMPO_PITCH, pitch);
-    BASS_ChannelSetAttribute(engine->soundsSfx[soundID], BASS_ATTRIB_VOL, engine->volSnd);
-    BASS_ChannelPlay(engine->soundsSfx[soundID], TRUE);
+    if (!engineAudio || !engineAudio->audio ||
+        soundID < 0 || (unsigned int)soundID >= engineAudio->soundsSfxLen)
+        return;
+
+    Audio_PlaySound(engineAudio->audio, engineAudio->soundsSfx[soundID],
+        engineAudio->volSnd, pitch);
 }
 
 void Engine_StopSoundSfx(int soundID) {
-    BASS_ChannelStop(engine->soundsSfx[soundID]);
+    if (!engineAudio || !engineAudio->audio ||
+        soundID < 0 || (unsigned int)soundID >= engineAudio->soundsSfxLen)
+        return;
+
+    Audio_StopSound(engineAudio->audio, engineAudio->soundsSfx[soundID]);
+}
+
+void Engine_UpdateAudio(Engine *engine) {
+    if (engine->audio)
+        Audio_SetVolumes(engine->audio, engine->volMus, engine->volSnd);
 }
 
 /////////////////////////////////////////////////////////////////////////
