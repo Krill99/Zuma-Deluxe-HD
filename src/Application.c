@@ -150,6 +150,22 @@ int ApplicationZuma_Start(void) {
   MenuMgr_Init(&app.menuMgr, &app.curLvl, &app.curDifficulty);
   MenuMgr_Set(&engine, &app.menuMgr, MR_MAIN);
 
+  /* Debug hook: ZUMA_START_LEVEL=<n> (and optional ZUMA_START_DIFF) skips the
+   * menus, so a level can be reproduced without driving the UI. */
+  {
+    const char *startLevel = SDL_getenv("ZUMA_START_LEVEL");
+    if (startLevel && *startLevel) {
+      const char *startDiff = SDL_getenv("ZUMA_START_DIFF");
+      app.curLvl = atoi(startLevel);
+      if (startDiff && *startDiff)
+        app.curDifficulty = atoi(startDiff);
+      app.inMenu = 0;
+      SDL_Log("Starting directly at level %d, difficulty %d", app.curLvl,
+          app.curDifficulty);
+      Game_Init(&levelMgr, &engine, &app.game, app.curLvl, app.curDifficulty);
+    }
+  }
+
   while (app.isRunning) {
     ApplicationZuma_HandleEvents(&app);
 

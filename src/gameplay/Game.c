@@ -32,6 +32,9 @@ void Game_Init(LevelMgr *levelMgr, Engine *engine, Game* game, int lvlID, int di
     Level_Load(levelMgr, engine, game->lvl);
 
     game->graphics = LevelMgr_GetLevelGraphics(levelMgr, game->lvl);
+    SDL_Log("Level start: stage %d lvl %d gfx %s settings %s", game->stageID, game->lvlID,
+        game->graphics ? game->graphics->id : "(none)",
+        (game->lvl->settingsID ? "own" : "profile"));
 
     // Resolve this level's tuned settings. A level without its own entry falls
     // back to the difficulty profile; the copy keeps global data immutable.
@@ -872,14 +875,16 @@ void Game_UpdateIntro(Engine *engine, Game* game) {
 void Game_DrawIntro(Engine *engine, Game* game) {
     Particles_Draw(engine, &game->particles);
 
-    char buff[16];
+    /* dispName is up to BUFF_SIZE; 16 overflowed the stack cookie on names
+     * like "Breath of Ehecatl" and crashed the level intro. */
+    char buff[BUFF_SIZE];
     SDL_Color color = {255, 255, 255, 255};
 
-    sprintf(buff, "%s", game->graphics->dispName);
+    SDL_snprintf(buff, sizeof(buff), "%s", game->graphics->dispName);
     Engine_DrawTextExtScale(engine, buff, FONT_NATIVE_ALIEN_EXT_16, game->subHeaderFontScale, color, false, true, 
         WINDOW_WIDTH - 250, WINDOW_HEIGHT - 95);
 
-    sprintf(buff, "LEVEL %d-%d", game->lvlID + 1, game->difficulty + 1);
+    SDL_snprintf(buff, sizeof(buff), "LEVEL %d-%d", game->lvlID + 1, game->difficulty + 1);
     Engine_DrawTextExtScale(engine, buff, FONT_NATIVE_ALIEN_48, game->headerFontScale, color, false, true, 
         WINDOW_WIDTH - 250, WINDOW_HEIGHT - 200);
     return;
